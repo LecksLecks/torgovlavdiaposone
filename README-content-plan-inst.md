@@ -47,6 +47,10 @@
 | 5 | `storyboard-first-3-reels.md` | Покадровые раскадровки первых 3 роликов: текст на экран + дословные реплики |
 | 6 | `capcut-editing-guide.md` | Пошаговый монтаж в CapCut: джамп-каты, субтитры, зум, звук, обложка, экспорт |
 | 7 | `telegram-funnel-aleshka.md` | Воронка Reels→Telegram: канал, bio, механики трафика, закреп, ритм, монетизация |
+| 8 | `risk-and-originality.md` | Копирайт, риск бана, оригинальность-микс, защита аккаунта, безопасный ролик |
+| 9 | `profile-setup.md` | Упаковка профиля: имя-ключ, bio, 3 закреплённых Reels, сетка, highlights |
+| 10 | `distribution-multiplatform.md` | Мультиплатформа (TikTok/Shorts/VK), первый час, модерация негатива |
+| 11 | `weekly-report-auto.md` | Авто-отчёт по Insights (Windsor.ai): живой отчёт, обновление, как читать метрики |
 
 Отдельно: `research-digital-products-ig-tiktok.md` — рыночное исследование ниш цифровых товаров
 (контекст для будущей монетизации).
