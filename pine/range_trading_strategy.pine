@@ -1,0 +1,154 @@
+//@version=6
+// =============================================================================
+// Range Trading Strategy (Торговля в диапазоне)
+// -----------------------------------------------------------------------------
+// Concept:
+//   * The range (flat) is defined on a HIGHER timeframe (default 1h) as the
+//     max High / min Low of the last N closed candles.
+//   * Entries are taken on the CHART timeframe (use 15m):
+//       - LONG  near the lower boundary when RSI < oversold  AND a bullish candle;
+//       - SHORT near the upper boundary when RSI > overbought AND a bearish candle.
+//   * Stop: just beyond the range boundary.
+//   * Take profit: range mid (conservative) or the opposite boundary.
+//
+// Recommended setup: apply on a 15m BTC/USDT chart. Range timeframe = 60 (1h).
+// The built-in Strategy Tester gives the backtest metrics (win rate, profit
+// factor, drawdown, number of trades, avg R:R).
+// =============================================================================
+
+strategy(
+     title               = "Range Trading (1h range / 15m entries)",
+     shorttitle          = "RangeTrade",
+     overlay             = true,
+     initial_capital     = 10000,
+     default_qty_type    = strategy.percent_of_equity,
+     default_qty_value   = 10,
+     commission_type     = strategy.commission.percent,
+     commission_value    = 0.05,
+     pyramiding          = 0,
+     calc_on_every_tick  = false,
+     process_orders_on_close = true)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+grpRange = "Range (higher timeframe)"
+rangeTf     = input.timeframe("60",  "Range timeframe",              group = grpRange, tooltip = "Timeframe used to build the flat range. 60 = 1 hour.")
+rangeLen    = input.int(20,   "Range lookback (candles)", minval = 2, group = grpRange, tooltip = "Number of closed higher-timeframe candles used for the max High / min Low.")
+useConfirmed= input.bool(true, "Use only closed HTF candles", group = grpRange, tooltip = "Recommended ON. Uses the last N fully closed higher-timeframe candles so the range does not repaint intrabar.")
+
+grpFlat = "Flat filter (optional)"
+useFlat     = input.bool(true, "Require a flat (non-trending) range", group = grpFlat)
+maxWidthPct = input.float(12.0, "Max range width, % of price", minval = 0.1, step = 0.5, group = grpFlat, tooltip = "Skip ranges that are too wide relative to price (usually a trend, not a flat).")
+minWidthPct = input.float(1.0,  "Min range width, % of price", minval = 0.1, step = 0.5, group = grpFlat, tooltip = "Skip ranges too tight to trade (spread/commission eat the move).")
+
+grpRsi = "RSI (entry filter)"
+rsiLen      = input.int(14, "RSI length",     minval = 2, group = grpRsi)
+rsiOs       = input.int(30, "Oversold (long)", minval = 1, maxval = 50, group = grpRsi)
+rsiOb       = input.int(70, "Overbought (short)", minval = 50, maxval = 99, group = grpRsi)
+
+grpEntry = "Entry / candle filter"
+touchPct    = input.float(15.0, "Boundary touch zone, % of range", minval = 1.0, step = 1.0, group = grpEntry, tooltip = "How close price must get to a boundary to arm an entry. 15% = within the lower/upper 15% of the range.")
+strongBody  = input.float(0.30, "Min candle body (fraction of range)", minval = 0.0, maxval = 1.0, step = 0.05, group = grpEntry, tooltip = "Require a decisive candle: body >= this fraction of the candle's high-low range. 0 disables.")
+
+grpExit = "Stops & targets"
+tpMode      = input.string("Range mid", "Take-profit target", options = ["Range mid", "Opposite boundary"], group = grpExit)
+stopMode    = input.string("Percent of range", "Stop buffer basis", options = ["Percent of range", "ATR"], group = grpExit)
+stopPct     = input.float(20.0, "Stop buffer, % of range", minval = 1.0, step = 1.0, group = grpExit, tooltip = "Distance beyond the boundary for the stop, as % of range height.")
+atrLen      = input.int(14,  "ATR length",      minval = 1, group = grpExit)
+atrMult     = input.float(1.0, "ATR stop multiplier", minval = 0.1, step = 0.1, group = grpExit)
+exitOnMid   = input.bool(false, "Also exit if price crosses range mid against us", group = grpExit)
+
+grpSession = "Trade management"
+oneAtATime  = input.bool(true, "Only one open position at a time", group = grpSession)
+
+// ---------------------------------------------------------------------------
+// Higher-timeframe range
+// ---------------------------------------------------------------------------
+// Offset so we only read fully-closed HTF candles when requested.
+htfHigh = useConfirmed ? ta.highest(high, rangeLen)[1] : ta.highest(high, rangeLen)
+htfLow  = useConfirmed ? ta.lowest(low,  rangeLen)[1] : ta.lowest(low,  rangeLen)
+
+[upper, lower] = request.security(
+     syminfo.tickerid, rangeTf, [htfHigh, htfLow],
+     lookahead = barmerge.lookahead_off)
+
+rangeValid = not na(upper) and not na(lower) and upper > lower
+height     = rangeValid ? upper - lower : na
+mid        = rangeValid ? (upper + lower) / 2.0 : na
+
+// Flat filter: width as a percentage of price.
+widthPct  = rangeValid ? (height / close) * 100.0 : na
+flatOk    = not useFlat or (rangeValid and widthPct <= maxWidthPct and widthPct >= minWidthPct)
+
+// ---------------------------------------------------------------------------
+// Indicators on the chart (15m) timeframe
+// ---------------------------------------------------------------------------
+rsiVal = ta.rsi(close, rsiLen)
+atrVal = ta.atr(atrLen)
+
+bodyFrac   = (high - low) > 0 ? math.abs(close - open) / (high - low) : 0.0
+strongOk   = bodyFrac >= strongBody
+bullCandle = close > open and strongOk
+bearCandle = close < open and strongOk
+
+// Touch zones near each boundary.
+touchDist   = rangeValid ? height * (touchPct / 100.0) : na
+nearLower   = rangeValid and low  <= lower + touchDist
+nearUpper   = rangeValid and high >= upper - touchDist
+
+// ---------------------------------------------------------------------------
+// Entry conditions
+// ---------------------------------------------------------------------------
+canTrade   = rangeValid and flatOk
+noBlocker  = not oneAtATime or strategy.position_size == 0
+
+longSignal  = canTrade and noBlocker and nearLower and rsiVal < rsiOs and bullCandle
+shortSignal = canTrade and noBlocker and nearUpper and rsiVal > rsiOb and bearCandle
+
+// Stop / target prices.
+stopBuffer  = stopMode == "ATR" ? atrVal * atrMult : (rangeValid ? height * (stopPct / 100.0) : na)
+
+longStop    = lower - stopBuffer
+shortStop   = upper + stopBuffer
+longTp      = tpMode == "Range mid" ? mid : upper
+shortTp     = tpMode == "Range mid" ? mid : lower
+
+// ---------------------------------------------------------------------------
+// Orders
+// ---------------------------------------------------------------------------
+if longSignal
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long TP/SL", from_entry = "Long", stop = longStop, limit = longTp)
+
+if shortSignal
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short TP/SL", from_entry = "Short", stop = shortStop, limit = shortTp)
+
+// Optional discretionary exit if price pushes through the mid against the trade.
+if exitOnMid and strategy.position_size > 0 and close < mid
+    strategy.close("Long", comment = "Mid cross")
+if exitOnMid and strategy.position_size < 0 and close > mid
+    strategy.close("Short", comment = "Mid cross")
+
+// Note: entries are market-on-close, so there are no pending entry orders to
+// cancel. The protective stop/limit from strategy.exit stay active until filled,
+// which keeps an open position protected even if the range later goes invalid.
+
+// ---------------------------------------------------------------------------
+// Plots
+// ---------------------------------------------------------------------------
+plot(rangeValid ? upper : na, "Upper", color = color.new(color.red, 0),   linewidth = 2, style = plot.style_linebr)
+plot(rangeValid ? lower : na, "Lower", color = color.new(color.green, 0), linewidth = 2, style = plot.style_linebr)
+plot(rangeValid ? mid   : na, "Mid",   color = color.new(color.gray, 40), linewidth = 1, style = plot.style_linebr)
+
+bgcolor(canTrade ? na : color.new(color.orange, 92), title = "No-trade (range invalid/not flat)")
+
+plotshape(longSignal,  "Long signal",  style = shape.triangleup,   location = location.belowbar, color = color.new(color.green, 0), size = size.small)
+plotshape(shortSignal, "Short signal", style = shape.triangledown, location = location.abovebar, color = color.new(color.red, 0),   size = size.small)
+
+// ---------------------------------------------------------------------------
+// Alerts (fire on the chart timeframe)
+// ---------------------------------------------------------------------------
+alertcondition(longSignal,  "Range LONG",  "Range long: price at lower boundary, RSI oversold, bullish candle.")
+alertcondition(shortSignal, "Range SHORT", "Range short: price at upper boundary, RSI overbought, bearish candle.")

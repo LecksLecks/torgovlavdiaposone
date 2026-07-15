@@ -1,0 +1,135 @@
+//@version=6
+// =============================================================================
+// Range Trading Indicator (Торговля в диапазоне) — visual + alerts
+// -----------------------------------------------------------------------------
+// Same logic as the strategy, but as an INDICATOR: it draws the 1h range on
+// your 15m chart, marks LONG/SHORT signals, shows a live status panel, and
+// fires alerts. Use it for discretionary trading; use the *_strategy.pine file
+// for the backtest metrics.
+//
+// Recommended setup: apply on a 15m BTC/USDT chart. Range timeframe = 60 (1h).
+// =============================================================================
+
+indicator(
+     title      = "Range Trading Signals (1h range / 15m entries)",
+     shorttitle = "RangeSignals",
+     overlay    = true)
+
+// ---------------------------------------------------------------------------
+// Inputs (kept identical to the strategy so signals match 1:1)
+// ---------------------------------------------------------------------------
+grpRange = "Range (higher timeframe)"
+rangeTf      = input.timeframe("60",  "Range timeframe",              group = grpRange, tooltip = "Timeframe used to build the flat range. 60 = 1 hour.")
+rangeLen     = input.int(20,   "Range lookback (candles)", minval = 2, group = grpRange)
+useConfirmed = input.bool(true, "Use only closed HTF candles", group = grpRange, tooltip = "Recommended ON so the range does not repaint intrabar.")
+
+grpFlat = "Flat filter (optional)"
+useFlat      = input.bool(true, "Require a flat (non-trending) range", group = grpFlat)
+maxWidthPct  = input.float(12.0, "Max range width, % of price", minval = 0.1, step = 0.5, group = grpFlat)
+minWidthPct  = input.float(1.0,  "Min range width, % of price", minval = 0.1, step = 0.5, group = grpFlat)
+
+grpRsi = "RSI (entry filter)"
+rsiLen       = input.int(14, "RSI length",       minval = 2, group = grpRsi)
+rsiOs        = input.int(30, "Oversold (long)",  minval = 1, maxval = 50, group = grpRsi)
+rsiOb        = input.int(70, "Overbought (short)", minval = 50, maxval = 99, group = grpRsi)
+
+grpEntry = "Entry / candle filter"
+touchPct     = input.float(15.0, "Boundary touch zone, % of range", minval = 1.0, step = 1.0, group = grpEntry)
+strongBody   = input.float(0.30, "Min candle body (fraction of range)", minval = 0.0, maxval = 1.0, step = 0.05, group = grpEntry)
+
+grpExit = "Stops & targets (for labels)"
+tpMode       = input.string("Range mid", "Take-profit target", options = ["Range mid", "Opposite boundary"], group = grpExit)
+stopMode     = input.string("Percent of range", "Stop buffer basis", options = ["Percent of range", "ATR"], group = grpExit)
+stopPct      = input.float(20.0, "Stop buffer, % of range", minval = 1.0, step = 1.0, group = grpExit)
+atrLen       = input.int(14,  "ATR length",       minval = 1, group = grpExit)
+atrMult      = input.float(1.0, "ATR stop multiplier", minval = 0.1, step = 0.1, group = grpExit)
+
+grpViz = "Display"
+showPanel    = input.bool(true, "Show status panel", group = grpViz)
+showLevels   = input.bool(true, "Show entry/stop/TP labels on signal", group = grpViz)
+
+// ---------------------------------------------------------------------------
+// Higher-timeframe range
+// ---------------------------------------------------------------------------
+htfHigh = useConfirmed ? ta.highest(high, rangeLen)[1] : ta.highest(high, rangeLen)
+htfLow  = useConfirmed ? ta.lowest(low,  rangeLen)[1] : ta.lowest(low,  rangeLen)
+
+[upper, lower] = request.security(
+     syminfo.tickerid, rangeTf, [htfHigh, htfLow],
+     lookahead = barmerge.lookahead_off)
+
+rangeValid = not na(upper) and not na(lower) and upper > lower
+height     = rangeValid ? upper - lower : na
+mid        = rangeValid ? (upper + lower) / 2.0 : na
+widthPct   = rangeValid ? (height / close) * 100.0 : na
+flatOk     = not useFlat or (rangeValid and widthPct <= maxWidthPct and widthPct >= minWidthPct)
+
+// ---------------------------------------------------------------------------
+// Chart-timeframe indicators & entry logic
+// ---------------------------------------------------------------------------
+rsiVal = ta.rsi(close, rsiLen)
+atrVal = ta.atr(atrLen)
+
+bodyFrac   = (high - low) > 0 ? math.abs(close - open) / (high - low) : 0.0
+strongOk   = bodyFrac >= strongBody
+bullCandle = close > open and strongOk
+bearCandle = close < open and strongOk
+
+touchDist  = rangeValid ? height * (touchPct / 100.0) : na
+nearLower  = rangeValid and low  <= lower + touchDist
+nearUpper  = rangeValid and high >= upper - touchDist
+
+canTrade   = rangeValid and flatOk
+longSignal  = canTrade and nearLower and rsiVal < rsiOs and bullCandle
+shortSignal = canTrade and nearUpper and rsiVal > rsiOb and bearCandle
+
+stopBuffer = stopMode == "ATR" ? atrVal * atrMult : (rangeValid ? height * (stopPct / 100.0) : na)
+longStop   = lower - stopBuffer
+shortStop  = upper + stopBuffer
+longTp     = tpMode == "Range mid" ? mid : upper
+shortTp    = tpMode == "Range mid" ? mid : lower
+
+// ---------------------------------------------------------------------------
+// Plots
+// ---------------------------------------------------------------------------
+plot(rangeValid ? upper : na, "Upper", color = color.new(color.red, 0),   linewidth = 2, style = plot.style_linebr)
+plot(rangeValid ? lower : na, "Lower", color = color.new(color.green, 0), linewidth = 2, style = plot.style_linebr)
+plot(rangeValid ? mid   : na, "Mid",   color = color.new(color.gray, 40), linewidth = 1, style = plot.style_linebr)
+
+bgcolor(canTrade ? na : color.new(color.orange, 92), title = "No-trade (range invalid/not flat)")
+
+plotshape(longSignal,  "Long signal",  style = shape.triangleup,   location = location.belowbar, color = color.new(color.green, 0), size = size.small, text = "LONG")
+plotshape(shortSignal, "Short signal", style = shape.triangledown, location = location.abovebar, color = color.new(color.red, 0),   size = size.small, text = "SHORT")
+
+// Entry/stop/TP labels on the signal bar.
+if showLevels and longSignal
+    label.new(bar_index, low, text = "Entry " + str.tostring(close, format.mintick) + "\nSL " + str.tostring(longStop, format.mintick) + "\nTP " + str.tostring(longTp, format.mintick), style = label.style_label_up, color = color.new(color.green, 20), textcolor = color.white, size = size.small)
+if showLevels and shortSignal
+    label.new(bar_index, high, text = "Entry " + str.tostring(close, format.mintick) + "\nSL " + str.tostring(shortStop, format.mintick) + "\nTP " + str.tostring(shortTp, format.mintick), style = label.style_label_down, color = color.new(color.red, 20), textcolor = color.white, size = size.small)
+
+// ---------------------------------------------------------------------------
+// Status panel
+// ---------------------------------------------------------------------------
+var table panel = table.new(position.top_right, 2, 6, border_width = 1)
+if showPanel and barstate.islast
+    stateTxt = not rangeValid ? "No range" : not flatOk ? "Not flat" : "Ready"
+    stateCol = not canTrade ? color.orange : color.teal
+    table.cell(panel, 0, 0, "Range Trading", text_color = color.white, bgcolor = color.new(color.blue, 0), text_size = size.small)
+    table.cell(panel, 1, 0, stateTxt,        text_color = color.white, bgcolor = color.new(stateCol, 0), text_size = size.small)
+    table.cell(panel, 0, 1, "Upper", text_color = color.white, text_size = size.small)
+    table.cell(panel, 1, 1, rangeValid ? str.tostring(upper, format.mintick) : "—", text_color = color.white, text_size = size.small)
+    table.cell(panel, 0, 2, "Lower", text_color = color.white, text_size = size.small)
+    table.cell(panel, 1, 2, rangeValid ? str.tostring(lower, format.mintick) : "—", text_color = color.white, text_size = size.small)
+    table.cell(panel, 0, 3, "Mid",   text_color = color.white, text_size = size.small)
+    table.cell(panel, 1, 3, rangeValid ? str.tostring(mid, format.mintick) : "—", text_color = color.white, text_size = size.small)
+    table.cell(panel, 0, 4, "Width %", text_color = color.white, text_size = size.small)
+    table.cell(panel, 1, 4, rangeValid ? str.tostring(widthPct, "#.##") : "—", text_color = color.white, text_size = size.small)
+    table.cell(panel, 0, 5, "RSI", text_color = color.white, text_size = size.small)
+    rsiCol = rsiVal < rsiOs ? color.green : rsiVal > rsiOb ? color.red : color.gray
+    table.cell(panel, 1, 5, str.tostring(rsiVal, "#.#"), text_color = color.white, bgcolor = color.new(rsiCol, 20), text_size = size.small)
+
+// ---------------------------------------------------------------------------
+// Alerts
+// ---------------------------------------------------------------------------
+alertcondition(longSignal,  "Range LONG",  "Range long: price at lower boundary, RSI oversold, bullish candle.")
+alertcondition(shortSignal, "Range SHORT", "Range short: price at upper boundary, RSI overbought, bearish candle.")
