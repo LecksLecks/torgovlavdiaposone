@@ -51,6 +51,10 @@
 | 9 | `profile-setup.md` | Упаковка профиля: имя-ключ, bio, 3 закреплённых Reels, сетка, highlights |
 | 10 | `distribution-multiplatform.md` | Мультиплатформа (TikTok/Shorts/VK), первый час, модерация негатива |
 | 11 | `weekly-report-auto.md` | Авто-отчёт по Insights (Windsor.ai): живой отчёт, обновление, как читать метрики |
+| 12 | `monetization-roadmap.md` | Дорожная карта денег: пороги, способы, первая интеграция, медиакит, бизнес-оформление |
+| 13 | `competitors-and-models.md` | Разбор конкурентов, вердикт по @kozhemiako, на кого равняться, тренды |
+| 14 | `stories-strategy.md` | Ежедневные Stories для удержания подписчиков (лекарство от отписок) |
+| 15 | `growth-and-operations.md` | Механики роста, лучшее время постинга (данные), трекинг форматов, буст, kill-switch |
 
 Отдельно: `research-digital-products-ig-tiktok.md` — рыночное исследование ниш цифровых товаров
 (контекст для будущей монетизации).
